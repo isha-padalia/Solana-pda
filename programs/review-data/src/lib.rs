@@ -1,45 +1,87 @@
 use anchor_lang::prelude::*;
-use std::mem::size_of;
 
-declare_id!("A1eDpmJYGi8VHwkiqxqztvPK3C3UpSC3LpZ3cE7m6a9");
+declare_id!("5FnywTyg3WvL9Mxy68TwuFWYk5UcMEU46zEL3tSLKTmC");
 
 #[program]
 pub mod review_data {
     use super::*;
 
-    pub fn post_review(ctx: Context<ReviewAccounts>, restaurant:String, review:String, rating: u8) -> Result<()> {
-        
-        let new_review = &mut ctx.accounts.review;
-        new_review.restaurant = restaurant;
-        new_review.reviewer = ctx.accounts.signer.key();
-        new_review.rating = rating;
-        new_review.review = review;
-        msg!("Restaurant review for {} - {} stars", new_review.restaurant, new_review.rating);
-        msg!("Review: {}", new_review.review);
+    pub fn create_hotel(ctx: Context<CreateHotel>, name: String) -> Result<()> {
+        let hotel = &mut ctx.accounts.hotel;
+        hotel.name = name;
+        hotel.review_count = 0;
+        hotel.reviews = Vec::new();  // Initialize the reviews as an empty vector
+        msg!("Hotel created with name: {}", hotel.name);
+        Ok(())
+    }
+
+    pub fn post_review(ctx: Context<PostReview>, review: String, rating: u8) -> Result<()> {
+        let hotel = &mut ctx.accounts.hotel;
+
+        // Check if max reviews (e.g. 10) have been reached
+        if hotel.review_count >= 10 {
+            return Err(ErrorCode::MaxReviewsReached.into());
+        }
+
+        // Create a new review
+        let new_review = Review {
+            reviewer: ctx.accounts.signer.key(),
+            review,
+            rating,
+        };
+
+        // Push the review to the reviews vector
+        hotel.reviews.push(new_review);
+        hotel.review_count += 1;
+
+        msg!("Review posted for {}: {} stars", hotel.name, rating);
         Ok(())
     }
 }
 
 #[derive(Accounts)]
-#[instruction(restaurant: String)]
-pub struct ReviewAccounts<'info> {
+pub struct CreateHotel<'info> {
     #[account(
-        init_if_needed,
+        init,
         payer = signer,
-        space = size_of::<Review>() + 8,
-        seeds = [restaurant.as_bytes().as_ref(), signer.key().as_ref()],
+        space = 8 + 64 + (4 + 10 * (32 + 4 + 256 + 1)),  // Allocate space for hotel name, reviews, and review count
+        seeds = [b"hotel", hotel_address.key().as_ref()],
         bump
     )]
-    pub review: Account<'info,Review>,
+    pub hotel: Account<'info, Hotel>,
     #[account(mut)]
     pub signer: Signer<'info>,
+    /// CHECK
+    #[account(mut)]
+    pub hotel_address: AccountInfo<'info,>, 
     pub system_program: Program<'info, System>,
 }
 
-#[account]
-pub struct Review{
+#[derive(Accounts)]
+pub struct PostReview<'info> {
+    #[account(mut)]
+    pub hotel: Account<'info, Hotel>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct Review {
     pub reviewer: Pubkey,
-    pub restaurant: String,
     pub review: String,
     pub rating: u8,
+}
+
+#[account]
+pub struct Hotel {
+    pub name: String,
+    pub review_count: u8,
+    pub reviews: Vec<Review>,  // Use Vec to dynamically handle reviews
+}
+
+// Custom error handling
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Maximum number of reviews reached.")]
+    MaxReviewsReached,
 }
